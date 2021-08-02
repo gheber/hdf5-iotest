@@ -1,0 +1,207 @@
+#+TITLE: HDF5 I/O Test
+
+* Introduction
+:PROPERTIES:
+:CUSTOM_ID: introduction
+:END:
+
+* How to use this document
+:PROPERTIES:
+:CUSTOM_ID: how-to-use-this-document
+:END:
+
+#+begin_src shell
+emacs --batch \
+      --no-init-file -l org --eval \
+'(progn (setq org-src-preserve-indentation t) (org-babel-tangle-file "hdf5-iotest.org")'
+#+end_src
+
+* Building HDF5 I/O Test
+:PROPERTIES:
+:CUSTOM_ID: building-hdf5-io-test
+:END:
+
+** Autotools
+
+** CMake
+
+CMake package discovery works most of the time, but needs help in
+highly-customized environments. Use the ~HDF5_ROOT~ and ~UUID_ROOT~ variables to
+be specific.
+
+#+begin_src shell :results verbatim
+
+mkdir -p ./build
+cd ./build
+rm -rf *
+cmake -D HDF5_ROOT:PATH=~/.local \
+      -D UUID_ROOT:PATH=/gnu/store/a45p39mgqvfd8kjwibyr0q42k1mw7gmf-util-linux-2.35.1-lib \
+      ../
+make
+
+#+end_src
+
+#+RESULTS:
+#+begin_example
+-- The C compiler identification is GNU 11.1.0
+-- Detecting C compiler ABI info
+-- Detecting C compiler ABI info - done
+-- Check for working C compiler: /home/gerd/.guix-profile/bin/gcc - skipped
+-- Detecting C compile features
+-- Detecting C compile features - done
+-- HDF5 C compiler wrapper is unable to compile a minimal HDF5 program.
+-- Found HDF5: /home/gerd/.local/lib/libhdf5.so (found version "1.13.0")
+-- Found MPI_C: /home/gerd/.guix-profile/lib/libmpi.so (found version "3.1")
+-- Found MPI: TRUE (found version "3.1")
+-- Found UUID: /gnu/store/a45p39mgqvfd8kjwibyr0q42k1mw7gmf-util-linux-2.35.1-lib/lib/libuuid.so
+-- Configuring done
+-- Generating done
+-- Build files have been written to: /home/gerd/scratch/hdf5-iotest/build
+[ 12%] Building C object src/CMakeFiles/hdf5_iotest.dir/configuration.c.o
+[ 25%] Building C object src/CMakeFiles/hdf5_iotest.dir/dataset.c.o
+[ 37%] Building C object src/CMakeFiles/hdf5_iotest.dir/hdf5_iotest.c.o
+[ 50%] Building C object src/CMakeFiles/hdf5_iotest.dir/ini.c.o
+[ 62%] Building C object src/CMakeFiles/hdf5_iotest.dir/read_test.c.o
+[ 75%] Building C object src/CMakeFiles/hdf5_iotest.dir/utils.c.o
+[ 87%] Building C object src/CMakeFiles/hdf5_iotest.dir/write_test.c.o
+[100%] Linking C executable ../bin/hdf5_iotest
+[100%] Built target hdf5_iotest
+#+end_example
+
+The ~hdf5_iotest~ binary will be located in ~./build/bin~.
+
+#+begin_src shell :results output
+ls -al ./build/bin
+#+end_src
+
+#+RESULTS:
+: total 68
+: drwxr-xr-x 2 gerd users  4096 Jul 30 11:12 .
+: drwxr-xr-x 5 gerd users  4096 Jul 30 11:12 ..
+: -rwxr-xr-x 1 gerd users 59672 Jul 30 11:12 hdf5_iotest
+
+** Spack
+
+* ~hdf5_iotest.ini~ template file
+:PROPERTIES:
+:CUSTOM_ID: ini-template-file
+:END:
+
+*** Common
+
+An =ini= file begins with a default section.
+
+#+begin_src shell :noweb-ref ini-common
+[DEFAULT]
+#+end_src
+
+- the version of the template,
+#+begin_src shell :noweb-ref ini-common
+version = {ini[version]}
+#+end_src
+
+- the number of steps,
+#+begin_src shell :noweb-ref ini-common
+steps = {ini[steps]}
+#+end_src
+
+- the number of arrays per step,
+#+begin_src shell :noweb-ref ini-common
+arrays = {ini[arrays]}
+#+end_src
+
+- the number of rows per array,
+#+begin_src shell :noweb-ref ini-common
+rows = {ini[rows]}
+#+end_src
+
+- the number of columns per array,
+#+begin_src shell :noweb-ref ini-common
+columns = {ini[columns]}
+#+end_src
+
+- align along increment [bytes] boundaries,
+#+begin_src shell :noweb-ref ini-common
+alignment-increment = {ini[alignment-increment]}
+#+end_src
+
+- the minimum object size [bytes] to force alignment (0 = all objects),
+#+begin_src shell :noweb-ref ini-common
+alignment-size = {ini[alignment-size]}
+#+end_src
+
+- the minimum metadata block allocation size [bytes],
+#+begin_src shell :noweb-ref ini-common
+meta-block-size = {ini[meta-block-size]}
+#+end_src
+
+- the HDF5 output file name,
+#+begin_src shell :noweb-ref ini-common
+hdf5-file = {ini[hdf5-file]}
+#+end_src
+
+- the CSV output file name,
+#+begin_src shell :noweb-ref ini-common
+csv-file = {ini[csv-file]}
+#+end_src
+
+- restart,
+#+begin_src shell :noweb-ref ini-common
+restart = {ini[restart]}
+#+end_src
+
+- use the split VFD to split metadata and "raw" data (0, 1),
+#+begin_src shell :noweb-ref ini-common
+split = {ini[split]}
+#+end_src
+
+- run a single case (> 0),
+#+begin_src shell :noweb-ref ini-common
+one-case = {ini[one-case]}
+#+end_src
+
+- Gzip compression ([0..9]),
+#+begin_src shell :noweb-ref ini-common
+gzip = {ini[gzip]}
+#+end_src
+
+- Szip compression (=H5_SZIP_NN_OPTION_MASK=, =8=),
+#+begin_src shell :noweb-ref ini-common
+szip = {ini[szip]}
+#+end_src
+
+*** Single process
+
+- the VFD to be used for single process runs,
+#+begin_src shell :noweb-ref ini-single-proc
+single-process = {ini[single-process]}
+#+end_src
+
+#+HEADER: :tangle ./tangle/single-proc.ini :mkdirp yes :noweb no-export
+#+begin_src shell
+<<ini-common>>
+<<ini-single-proc>>
+#+end_src
+
+*** Multiple processes
+
+- the number of process rows,
+#+begin_src shell :noweb-ref ini-multi-proc
+process-rows = {ini[process-rows]}
+#+end_src
+
+- the number of process columns,
+#+begin_src shell :noweb-ref ini-multi-proc
+process-columns = {ini[process-columns]}
+#+end_src
+
+- the scaling mode (weak, strong),
+#+begin_src shell :noweb-ref ini-multi-proc
+scaling = {ini[scaling]}
+#+end_src
+
+#+HEADER: :tangle ./tangle/multi-proc.ini :mkdirp yes :noweb no-export
+#+begin_src shell
+<<ini-common>>
+<<ini-multi-proc>>
+#+end_src

@@ -1,0 +1,39 @@
+cmake_minimum_required(VERSION 3.5 FATAL_ERROR)
+cmake_policy(SET CMP0074 OLD)
+
+project(hdf5-iotest LANGUAGES C)
+
+set(CMAKE_C_STANDARD 99)
+set(CMAKE_C_STANDARD_REQUIRED ON)
+
+include(GNUInstallDirs)
+
+set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY
+  ${CMAKE_BINARY_DIR}/${CMAKE_INSTALL_LIBDIR})
+set(CMAKE_LIBRARY_OUTPUT_DIRECTORY
+  ${CMAKE_BINARY_DIR}/${CMAKE_INSTALL_LIBDIR})
+set(CMAKE_RUNTIME_OUTPUT_DIRECTORY
+  ${CMAKE_BINARY_DIR}/${CMAKE_INSTALL_BINDIR})
+
+find_package(HDF5 REQUIRED)
+find_package(MPI REQUIRED)
+
+if(NOT UUID_FOUND)
+
+  find_path(UUID_INCLUDE_DIR uuid/uuid.h
+    HINTS ${UUID_ROOT} PATH_SUFFIXES include)
+  find_library(UUID_LIBRARY uuid
+    HINTS ${UUID_ROOT} PATH_SUFFIXES lib)
+
+  mark_as_advanced(UUID_INCLUDE_DIR UUID_LIBRARY)
+
+  include(FindPackageHandleStandardArgs)
+  find_package_handle_standard_args(UUID DEFAULT_MSG
+    UUID_LIBRARY UUID_INCLUDE_DIR)
+
+  set(UUID_INCLUDE_DIRS ${UUID_INCLUDE_DIR})
+  set(UUID_LIBRARIES ${UUID_LIBRARY})
+
+endif(NOT UUID_FOUND)
+
+add_subdirectory(src)
