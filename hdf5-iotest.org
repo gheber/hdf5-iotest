@@ -10,11 +10,458 @@
 :CUSTOM_ID: how-to-use-this-document
 :END:
 
-#+begin_src shell
-emacs --batch \
-      --no-init-file -l org --eval \
-'(progn (setq org-src-preserve-indentation t) (org-babel-tangle-file "hdf5-iotest.org")'
+#+begin_src shell :results none
+mkdir -p $HOME/environment
+cd $HOME/environment
+guix environment --pure --ad-hoc wget -- wget \
+  https://raw.githubusercontent.com/gheber/hdf5-iotest/reproducibility/hdf5-iotest.org
+mv hdf5-iotest.org environment.org
 #+end_src
+
+#+begin_src shell :dir ~/environment :results none
+guix environment --pure --ad-hoc emacs emacs-org -- emacs --batch \
+     --no-init-file -l org --eval \
+'(progn (setq org-src-preserve-indentation t) (org-babel-tangle-file "environment.org"))'
+#+end_src
+
+The tangled source files should appear in ~$HOME/environment/tangle~.
+
+Before running the benchmarks, we have to set up the ~gcvb~ filesystem (see
+Section [[#mkgcvbfs.sh]]). It should appear at ~$HOME/benchmarks/h5iot~. The
+~mkgcvbfs.sh~ script has to be run directly from the ~$HOME/environment/tangle~
+directory. Notice that we use the ~setenv.sh~ script (see Section
+[[#setenv.sh]]) to enter to the appropriate Guix environment.
+
+#+begin_src shell
+cd $HOME/environment/tangle
+$(./setenv.sh -ge 'fs') -- ./mkgcvbfs.sh -f ./h5iot.fstab \
+                        -o $HOME/benchmarks/h5iot
+cd $HOME/environment
+#+end_src
+
+#+RESULTS:
+
+We also need to explicitly acquire the source tarballs of the software packages
+~hdf5-iotest~, ~darshan~ and ~recorder~. They should be placed under
+~$HOME/src~.
+
+#+begin_src shell
+./tangle/setenv.sh -p
+#+end_src
+
+* Building reproducible software environments
+:PROPERTIES:
+:CUSTOM_ID: building-reproducible-software-environments
+:header-args: :eval never
+:END:
+
+** GNU Guix
+:PROPERTIES:
+:CUSTOM_ID: gnu-guix
+:END:
+
+** Spack
+:PROPERTIES:
+:CUSTOM_ID: spack
+:END:
+
+** Channels
+:PROPERTIES:
+:CUSTOM_ID: channels
+:header-args: :tangle ./tangle/channels.scm :mkdirp yes :padline no
+:END:
+
+Software packages in Guix are available through dedicated Git repositories
+containing package definitions. These repositories are called channels.
+
+The first and default channel is the system channel providing Guix itself as
+well as the definitions of some commonly used packages such as system libraries,
+compilers, text editors and so on. Afterwards, we need to include additional
+channels using a custom channel file ~channels.scm~ written in the Scheme
+language.
+
+For each channel, we specify the commit of the associated repository to acquire.
+This way, we make sure to always build the environment using the exact same
+versions of every single package in the system and guarantee the
+reproducibility of the environment.
+
+#+BEGIN_SRC scheme
+(list
+ (channel
+  (name 'guix)
+  (url "https://git.savannah.gnu.org/git/guix.git")
+  (commit "1ac4959c6a94a89fc8d3a73239d107cfb1d96240"))
+#+END_SRC
+
+*** TODO Fix the commit tag
+
+** Environments
+:PROPERTIES:
+:CUSTOM_ID: setenv.sh
+:header-args: :tangle ./tangle/setenv.sh :shebang "#!/usr/bin/env bash"
+:END:
+
+#+BEGIN_SRC shell
+function help() {
+  echo "Set up the environment for HDF5 I/O Test." >&2
+  echo "Usage: $0 [options]" >&2
+  echo >&2
+  echo "Options:" >&2
+  echo "  -e ENVIRONMENT    Switch the software environment to ENVIRONMENT." \
+       "Available environments are: 'benchmark' (include packages for" \
+       "performing benchmarks, default choice), 'fs' (include packages for" \
+       "intializing gcvb filesystem using the mkgcvbfs.sh script), 'gather'" \
+       "(include packages for gathering results from multiple '*.csv' files" \
+       "into a single dataframe) and 'post_process' (include packages for" \
+       "post-processing)" >&2
+  echo "  -g                Get the final 'guix environment' command line" \
+       "that can be followed by an arbitrary command to be executed inside" \
+       "the environment. The trailing '--' should be added manually!" >&2
+  echo "  -h                Show this help message." >&2
+  echo "  -p                Prepare the source tarballs of the HDF5 I/O test" \
+       "packages. If combined with '-r', the tarballs shall be placed into" \
+       "the directory specified by the latter." >&2
+  echo "  -r ROOT           Search for sources at ROOT in lieu of the" \
+       "default location at '$HOME/src'." >&2
+}
+#+END_SRC
+
+Follows a generic error message function. The error message to print is expected
+to be the first argument to the function. If not present, a generic message is
+displayed.
+
+#+NAME: shell-error-function
+#+BEGIN_SRC shell
+function error() {
+  if test $# -lt 1;
+  then
+    echo "An unknown error occurred!" >&2
+  else
+    echo "Error: $1" >&2
+  fi
+}
+#+END_SRC
+
+=PACKAGE_MANAGER= specifies the package manager. Valid options are =guix= and
+=spack=.
+
+#+BEGIN_SRC shell
+PACKAGE_MANAGER="guix"
+#+END_SRC
+
+=H5IOT_ROOT= specifies the location where to search for the source tarballs of
+the HDF5 I/O test packages. This can be modified using the =-r= option. The
+default value is ~$HOME/src~.
+
+#+BEGIN_SRC shell
+H5IOT_ROOT="$HOME/src"
+#+END_SRC
+
+By default, the script suppose the tarballs already exist and tries to set up
+the environment directly. =PREPARE_TARBALLS= is a boolean switch indicating
+whether the source tarballs of the source packages should be generated first
+before setting up the environment.
+
+#+BEGIN_SRC shell
+PREPARE_TARBALLS=0
+#+END_SRC
+
+
+#+BEGIN_SRC shell
+GET_COMMAND=0
+
+ENVIRONMENT="build"
+
+while getopts ":e:ghpr:x" option;
+do
+  case $option in
+#+END_SRC
+
+The =-e= option allows to choose among multiple software environments.
+
+#+BEGIN_SRC shell
+    e)
+      ENVIRONMENT=$OPTARG
+      ;;
+#+END_SRC
+
+The =-g= option allows to print out the final =guix environment= command instead
+of directly entering the environment. This is useful for writing one-line
+commands, for example, in the continuous integration configuration.
+
+#+BEGIN_SRC shell
+    g)
+      GET_COMMAND=1
+      ;;
+    p)
+      PREPARE_TARBALLS=1
+      ;;
+    r)
+      H5IOT_ROOT=$OPTARG
+
+      if test ! -d "$H5IOT_ROOT";
+      then
+          error "'$H5IOT_ROOT' is not a valid directory!"
+          exit 1
+      fi
+      ;;
+#+END_SRC
+
+We must also take into account unknown options, missing option arguments, syntax
+mismatches as well as the case when the =-h= option is specified.
+
+#+BEGIN_SRC shell
+    \?)
+      error "Arguments mismatch! Invalid option '-$OPTARG'."
+     echo
+     help
+     exit 1
+     ;;
+   :)
+     error "Arguments mismatch! Option '-$OPTARG' expects an argument!"
+     echo
+     help
+     exit 1
+     ;;
+   h | *)
+     help
+     exit 0
+     ;;
+   esac
+done
+#+END_SRC
+
+The following variables indicate the commit numbers, branch names and archive
+locations to use by default for the generation of the Airbus source tarballs.
+
+#+BEGIN_SRC shell
+H5IOT_BASENAME="hdf5-iotest-git.3debf2e"
+H5IOT_TARBALL="$H5IOT_ROOT/$H5IOT_BASENAME.tar.gz"
+H5IOT_COMMIT="3debf2ec4b60244c7f72afebaa741b80059ed3dd"
+H5IOT_BRANCH="reproducibility"
+DARSHAN_BASENAME="darshan-git.1c1a31c"
+DARSHAN_TARBALL="$H5IOT_ROOT/$DARSHAN_BASENAME.tar.gz"
+DARSHAN_COMMIT="1c1a31cf44d5b2a6548a2fe95284dbbe88651bfc"
+DARSHAN_BRANCH="main"
+RECORDER_BASENAME="recorder-git.dead3d2"
+RECORDER_TARBALL="$H5IOT_ROOT/$RECORDER_BASENAME.tar.gz"
+RECORDER_COMMIT="dead3d2800f605df9160b7d13ab1d3e3a03d9919"
+RECORDER_BRANCH="master"
+#+END_SRC
+
+If the =-p= option is specified, we get a clone of the package repositories and
+create the source tarballs of ~hdf5-iotest~, ~darshan~ and ~recorder~ using the
+specified commit numbers and branch names before trying to setup up the
+environment.
+
+#+BEGIN_SRC shell
+if test $PREPARE_TARBALLS -ne 0;
+then
+#+END_SRC
+
+We begin by removing any previous clones of the Airbus repositories in
+=H5IOT_ROOT=.
+
+#+BEGIN_SRC shell
+  rm -rf $H5IOT_ROOT/$H5IOT_BASENAME $H5IOT_ROOT/$DARSHAN_BASENAME \
+     $H5IOT_ROOT/$RECORDER_BASENAME $H5IOT_TARBALL $DARSHAN_TARBALL \
+     $RECORDER_TARBALL
+#+END_SRC
+
+Then, we make fresh clones, checkout the required revisions
+
+#+BEGIN_SRC shell
+  git clone --recurse-submodules --single-branch --branch $H5IOT_BRANCH \
+      https://github.com/gheber/hdf5-iotest.git $H5IOT_ROOT/$H5IOT_BASENAME
+  cd $H5IOT_ROOT/$H5IOT_BASENAME
+  git checkout $H5IOT_COMMIT
+
+  git clone --single-branch --branch $DARSHAN_BRANCH \
+      https://github.com/darshan-hpc/darshan.git $H5IOT_ROOT/$DARSHAN_BASENAME
+  cd $H5IOT_ROOT/$DARSHAN_BASENAME
+  git checkout $DARSHAN_COMMIT
+
+  git clone --single-branch --branch $RECORDER_BRANCH \
+      https://github.com/uiuc-hpc/Recorder.git $H5IOT_ROOT/$RECORDER_BASENAME
+  cd $H5IOT_ROOT/$RECORDER_BASENAME
+  git checkout $RECORDER_COMMIT
+#+END_SRC
+
+and verify that the cloned repositories are valid directories.
+
+#+BEGIN_SRC shell
+  if test ! -d $H5IOT_ROOT/$H5IOT_BASENAME || \
+      test ! -d $H5IOT_ROOT/$DARSHAN_BASENAME || \
+      test ! -d $H5IOT_ROOT/$RECORDER_BASENAME;
+  then
+    error "Failed to clone the package reporitories!"
+    exit 1
+  fi
+#+END_SRC
+
+We remove the ~.git~ folders from inside the clones to shrink the size of the
+final tarball created using the =tar= utility.
+
+#+BEGIN_SRC shell
+  rm -rf $H5IOT_ROOT/$H5IOT_BASENAME/.git \
+     $H5IOT_ROOT/$DARSHAN_BASENAME/.git \
+     $H5IOT_ROOT/$RECORDER_BASENAME/.git
+
+  tar -czf $H5IOT_TARBALL -C $H5IOT_ROOT $H5IOT_BASENAME
+  tar -czf $DARSHAN_TARBALL -C $H5IOT_ROOT $DARSHAN_BASENAME
+  tar -czf $RECORDER_TARBALL -C $H5IOT_ROOT $RECORDER_BASENAME
+#+END_SRC
+
+At the end of the procedure, we check if the tarballs were created and remove
+the clones.
+
+#+BEGIN_SRC shell
+  if test ! -f $H5IOT_TARBALL || test ! -f $DARSHAN_TARBALL || \
+      test ! -f $RECORDER_TARBALL;
+  then
+    error "Failed to create tarballs!"
+    exit 1
+  fi
+
+  rm -rf $H5IOT_ROOT/$H5IOT_BASENAME $H5IOT_ROOT/$DARSHAN_BASENAME \
+     $H5IOT_ROOT/$RECORDER_BASENAME
+fi
+#+END_SRC
+
+Eventually comes the =guix environment= command itself.
+
+In order to access the additional features we implemented into the ~gcvb~
+package (see Section [[#performing-benchmarks]]), we switch to our fork of the
+package's repository. Sometimes, a local clone of the latter is necessary. Being
+hosted on GitHub, it can not be acquired online by Guix on some computing
+platforms having too restrictive proxy settings.
+
+#+BEGIN_SRC shell
+if test ! -d $H5IOT_ROOT/gcvb;
+then
+    cd ..
+    cd $H5IOT_ROOT
+    git clone https://github.com/felsocim/gcvb.git $H5IOT_ROOT/gcvb
+fi
+
+cd ..
+cd $H5IOT_ROOT
+#+END_SRC
+
+The list of packages to include into the resulting environment as well as the
+options to pass to the =guix environment= command are based on the environment
+switch =-e=. Available environments are listed below. Note that, the
+=--preserve= option allows us to inherit selected environment variables from the
+parent environment.
+
+- =build=: environment for building packages,
+
+#+BEGIN_SRC shell
+OPTIONS_BUILD=""
+PACKAGES_BUILD="bash coreutils tar gzip openmpi openssh hdf5-parallel-openmpi make cmake gcc-toolchain zlib util-linux"
+#+END_SRC
+
+- =benchmark=: environment for performing benchmarks,
+
+#+BEGIN_SRC shell
+OPTIONS_BENCHMARK="--with-git-url=gcvb=$H5IOT_ROOT/gcvb
+--with-commit=gcvb=40d88ba241db4c71ac3e1fe8024fba4d906f45b1 --preserve=^SLURM"
+PACKAGES_BENCHMARK="bash coreutils findutils grep sed bc openmpi openssh hdf5-parallel-openmpi python python-psutil r"
+#+END_SRC
+
+- =fs=: environment for initializing benchmark filesystem using the
+  ~mkgcvbfs.sh~ script (see Section [[#initializing-filesystem]]),
+
+#+BEGIN_SRC shell
+PACKAGES_FS="bash coreutils"
+#+END_SRC
+
+- =gather=: environment for gathering benchmark results from multiple ~*.csv~
+  files into a single data frame,
+
+#+BEGIN_SRC shell
+OPTIONS_GATHER="--preserve=TZDIR"
+PACKAGES_GATHER="r r-plyr r-dplyr r-readr"
+#+END_SRC
+
+- =extract=: environment for extracting additional benchmark results from a
+  selected set of benchmarks using the script ~extract.sh~ (see Section
+  [[#extract.sh]])
+
+#+BEGIN_SRC shell
+PACKAGES_EXTRACT="bash coreutils sed python2"
+#+END_SRC
+
+- =post_process=: environment for post-processing benchmark results and
+  publishing HTML and LaTeX documents.
+
+#+BEGIN_SRC shell
+OPTIONS_POST_PROCESS="--preserve=TZDIR"
+PACKAGES_POST_PROCESS="bash sed which emacs emacs-org2web emacs-org
+emacs-htmlize emacs-biblio emacs-org-ref emacs-ess python-pygments texlive r
+r-plyr r-dplyr r-readr r-tidyr r-ggplot2 r-scales r-cowplot r-stringr
+r-gridextra r-starvz inkscape@0.92"
+#+END_SRC
+
+Based on the value of =$ENVIRONMENT=, we select the environment to set up.
+
+#+BEGIN_SRC shell
+OPTIONS=""
+PACKAGES=""
+
+case $ENVIRONMENT in
+  build)
+    OPTIONS="$OPTIONS_BUILD"
+    PACKAGES="$PACKAGES_BUILD"
+    ;;
+  benchmark)
+    OPTIONS="$OPTIONS_BENCHMARK"
+    PACKAGES="$PACKAGES_BENCHMARK"
+    ;;
+  fs)
+    PACKAGES="$PACKAGES_FS"
+    ;;
+  gather)
+    OPTIONS="$OPTIONS_GATHER"
+    PACKAGES="$PACKAGES_GATHER"
+    ;;
+  extract)
+    PACKAGES="$PACKAGES_EXTRACT"
+    ;;
+  post_process)
+    OPTIONS="$OPTIONS_POST_PROCESS"
+    PACKAGES="$PACKAGES_POST_PROCESS"
+    ;;
+  ,*)
+    error "'$ENVIRONMENT' is not a valid software environment switch!"
+    exit 1
+    ;;
+esac
+#+END_SRC
+
+Now it is possible to assemble the =guix environment= command and its options.
+To unset any existing environment variables of the current environment, we use
+the =--pure= option. Then, the =--ad-hoc-= option includes all the packages, the
+list of which follows the option, in the resulting environment.
+
+#+BEGIN_SRC shell
+ENVIRONMENT_COMMAND="guix environment --pure $OPTIONS --ad-hoc $PACKAGES"
+#+END_SRC
+
+If the =-g= option is set, we only print the command on the standard output.
+Otherwise, we directly enter the new environment and launch a shell interpreter.
+The =--norc= option of bash prevents the sourcing of the current user's
+~.bashrc~ file.
+
+#+BEGIN_SRC shell
+if test $GET_COMMAND -ne 0;
+then
+  echo $ENVIRONMENT_COMMAND
+  exit 0
+fi
+
+$ENVIRONMENT_COMMAND -- bash --norc
+#+END_SRC
 
 * Building HDF5 I/O Test
 :PROPERTIES:
@@ -37,48 +484,19 @@ rm -rf *
 cmake -D HDF5_ROOT:PATH=~/.local \
       -D UUID_ROOT:PATH=/gnu/store/a45p39mgqvfd8kjwibyr0q42k1mw7gmf-util-linux-2.35.1-lib \
       ../
+
+cmake -D UUID_ROOT:PATH=/gnu/store/a45p39mgqvfd8kjwibyr0q42k1mw7gmf-util-linux-2.35.1-lib \
+      ../
+
 make
 
 #+end_src
-
-#+RESULTS:
-#+begin_example
--- The C compiler identification is GNU 11.1.0
--- Detecting C compiler ABI info
--- Detecting C compiler ABI info - done
--- Check for working C compiler: /home/gerd/.guix-profile/bin/gcc - skipped
--- Detecting C compile features
--- Detecting C compile features - done
--- HDF5 C compiler wrapper is unable to compile a minimal HDF5 program.
--- Found HDF5: /home/gerd/.local/lib/libhdf5.so (found version "1.13.0")
--- Found MPI_C: /home/gerd/.guix-profile/lib/libmpi.so (found version "3.1")
--- Found MPI: TRUE (found version "3.1")
--- Found UUID: /gnu/store/a45p39mgqvfd8kjwibyr0q42k1mw7gmf-util-linux-2.35.1-lib/lib/libuuid.so
--- Configuring done
--- Generating done
--- Build files have been written to: /home/gerd/scratch/hdf5-iotest/build
-[ 12%] Building C object src/CMakeFiles/hdf5_iotest.dir/configuration.c.o
-[ 25%] Building C object src/CMakeFiles/hdf5_iotest.dir/dataset.c.o
-[ 37%] Building C object src/CMakeFiles/hdf5_iotest.dir/hdf5_iotest.c.o
-[ 50%] Building C object src/CMakeFiles/hdf5_iotest.dir/ini.c.o
-[ 62%] Building C object src/CMakeFiles/hdf5_iotest.dir/read_test.c.o
-[ 75%] Building C object src/CMakeFiles/hdf5_iotest.dir/utils.c.o
-[ 87%] Building C object src/CMakeFiles/hdf5_iotest.dir/write_test.c.o
-[100%] Linking C executable ../bin/hdf5_iotest
-[100%] Built target hdf5_iotest
-#+end_example
 
 The ~hdf5_iotest~ binary will be located in ~./build/bin~.
 
 #+begin_src shell :results output
 ls -al ./build/bin
 #+end_src
-
-#+RESULTS:
-: total 68
-: drwxr-xr-x 2 gerd users  4096 Jul 30 11:12 .
-: drwxr-xr-x 5 gerd users  4096 Jul 30 11:12 ..
-: -rwxr-xr-x 1 gerd users 59672 Jul 30 11:12 hdf5_iotest
 
 ** Spack
 
@@ -205,3 +623,427 @@ scaling = {ini[scaling]}
 <<ini-common>>
 <<ini-multi-proc>>
 #+end_src
+
+* Performing benchmarks
+
+:PROPERTIES:
+:CUSTOM_ID: performing-benchmarks
+:header-args: :eval never
+:END:
+
+To automatize the generation and the computation of benchmarks, we use ~gcvb~
+cite:gcvb, an open-source tool developed at Airbus. ~gcvb~ allows us to define
+series of benchmarks, generate corresponding shell job scripts for every
+benchmark or a selected group of benchmarks, submit these job scripts for
+execution, then gather and optionally validate or post-process the results. To
+generate multiple variants of the same benchmark ~gcvb~ provides templates.
+
+** =sbatch= template files
+:PROPERTIES:
+:CUSTOM_ID: sbatch-template-files
+:END:
+
+
+** ~gcvb~
+:PROPERTIES:
+:CUSTOM_ID: gcvb
+:END:
+
+~gcvb~ uses a specific file and directory structure. There are two main Yaml
+files to configure and define a series of benchmarks. Both files must be placed
+in the same folder. Furthermore, the name of the configuration file must be
+~config.yaml~. On the other hand, the benchmark definition file may have an
+arbitrary name. The folder we place this couple of files in, for instance
+~$HOME/benchmarks/~, represents the root of the filesystem of our benchmark
+series where:
+
+- ~$HOME/benchmarks/h5iot/~
+  - ~data/~ contains data necessary to generate and perform benchmarks.
+    - ~all/~ represents one of possibly more folders containing benchmark data.
+      For the sake of simplicity, we use one single folder for all benchmarks.
+      - ~input~ holds any input file necessary to generate benchmarks.
+      - ~references~ holds any reference file needed for result validation.
+      - ~templates~ provides file templates for template-based benchmarks. We
+        use templates to produce specific batch job script header directives for
+        the workload manager on the target computing platform (see Section
+        [[#sbatch-template-files]]). Each of the subfolders contains a script
+        header template. Headers generated based on these templates are
+        prepended to the final job scripts produced by ~gcvb~.
+        1. ~monobatch/sbatch~
+        2. ~polybatch/sbatch~
+        3. ~coupled/sbatch~
+        4. ~scalability/sbatch~
+  - ~results/~ contains benchmark results. Here, one subfolder is produced every
+    time a new session of benchmarks is generated based on the definition file.
+    It contains job scripts and one folder per generated benchmark. These may
+    hold any templated-based input file as well as the result of the
+    corresponding benchmark execution.
+    - ~1/~
+    - ...
+  - ~config.yaml~ represents the configuration file.
+  - ~gcvb.db~ represents an auto-generated NoSQL database that can be used to
+    store benchmark results.
+  - ~h5iot.yaml~ represents the benchmark definition file.
+
+    * Initializing filesystem
+:PROPERTIES:
+:CUSTOM_ID: initializing-filesystem
+:END:
+
+*** Initialization script
+:PROPERTIES:
+:CUSTOM_ID: mkgcvbfs.sh
+:header-args: :tangle ./tangle/mkgcvbfs.sh :mkdirp yes
+:header-args+: :shebang "#!/usr/bin/env bash"
+:END:
+
+We wrote the shell script ~mkgcvbfs.sh~ to automatize the initialization of a
+~gcvb~ filesystem or to check if a specific ~gcvb~ filesystem is valid.
+
+Traditionally, the script begins with a help message function that can be
+triggered using the =-h= option.
+
+#+BEGIN_SRC shell
+function help() {
+  echo "Initialize a gcvb file system described in FSTAB at FSPATH." >&2
+  echo "Usage: ./$(basename $0) [options]" >&2
+  echo >&2
+  echo "Options:" >&2
+  echo "  -h           Show this help message." >&2
+  echo "  -c           Check if a valid gcvb filesystem is present in PATH." >&2
+  echo "  -f FSTAB     Initialize the gcvb filesystem specified in FSTAB." >&2
+  echo "  -o FSPATH    Set the output path for the filesystem to create." >&2
+}
+#+END_SRC
+
+Then, we include a generic error function.
+
+#+BEGIN_SRC shell :noweb yes
+<<shell-error-function>>
+#+END_SRC
+
+The script requires an ~.fstab~ file describing the filesystem to create (see
+Section [[#description-file]]), e. g. the entries to initialize the filesystem
+with and the destination path of the latter.
+
+=FSTAB= holds the path to an ~.fstab~ description file provided using the =-f=
+option.
+
+#+BEGIN_SRC shell
+FSTAB=""
+#+END_SRC
+
+=FSPATH= holds the destination path to create the filesystem in (see the =-o=
+option).
+
+#+BEGIN_SRC shell
+FSPATH=""
+#+END_SRC
+
+The =-c= option, corresponding to the =CHECK_ONLY= boolean variable, allows to
+check an existing ~gcvb~ filesystem against an ~.fstab~ description instead of
+creating it.
+
+#+BEGIN_SRC shell
+CHECK_ONLY=0
+#+END_SRC
+
+At this stage, we are ready to parse the options and check the validity of
+option arguments where applicable.
+
+#+BEGIN_SRC shell
+while getopts ":hcf:o:" option;
+do
+  case $option in
+    c)
+      CHECK_ONLY=1
+      ;;
+    f)
+      FSTAB=$OPTARG
+
+      if test ! -f $FSTAB;
+      then
+        error "'$FSTAB' is not a valid file!"
+        exit 1
+      fi
+      ;;
+      o)
+        FSPATH=$OPTARG
+        ;;
+#+END_SRC
+
+We must also take into account unknown options, missing option arguments, syntax
+mismatches as well as the case when the =-h= option is specified.
+
+#+BEGIN_SRC shell
+    \?) # Unknown option
+      error "Arguments mismatch! Invalid option '-$OPTARG'."
+      echo
+      help
+      exit 1
+      ;;
+    :) # Missing option argument
+       error "Arguments mismatch! Option '-$OPTARG' expects an argument!"
+       echo
+       help
+       exit 1
+       ;;
+     h | *)
+       help
+       exit 0
+       ;;
+   esac
+done
+#+END_SRC
+
+Next, we have to check if the user has provided the path to the ~.fstab~ file
+
+#+BEGIN_SRC shell
+if test "$FSTAB" == "";
+then
+  error "No filesystem description file was specified!"
+  exit 1
+fi
+#+END_SRC
+
+as well as the destination path of the ~gcvb~ filesystem to create.
+
+#+BEGIN_SRC shell
+if test "$FSPATH" == "";
+then
+  error "No output location for the filesystem was specified!"
+  exit 1
+fi
+#+END_SRC
+
+Eventually, we process all of the entries in the ~.fstab~ description file. Each
+line represents a specification of an entry in the ~gcvb~ filesystem to
+initialize (see Section [[#description-file]]). Notice that to separate
+information in an entry specification we use colons.
+
+#+BEGIN_SRC shell
+for entry in $(cat $FSTAB);
+do
+#+END_SRC
+
+The first information tells us whether a file or a directory should be
+initialized.
+
+#+BEGIN_SRC shell
+  ACTION=$(echo $entry | cut -d':' -f 1)
+  case $ACTION in
+#+END_SRC
+
+If it is a file, follows its source path and its destination in the target
+filesystem.
+
+#+BEGIN_SRC shell
+    F|f)
+      SOURCE=$(echo $entry | cut -d':' -f 2)
+      DESTINATION=$(echo $entry | cut -d':' -f 3)
+#+END_SRC
+
+If the =-c= option is passed (see variable =CHECK_ONLY=), we only check that the
+target filesystem contains the file.
+
+#+BEGIN_SRC shell
+      if test $CHECK_ONLY -ne 0;
+      then
+        if test ! -f $FSPATH/$DESTINATION;
+        then
+          error "Filesystem is incomplete! Missing '$FSPATH/$DESTINATION'."
+          exit 1
+        fi
+
+        continue
+      fi
+#+END_SRC
+
+Otherwise, we need to check if the source file exists
+
+#+BEGIN_SRC shell
+      if test ! -f $SOURCE;
+      then
+        error "Failed to initialize file '$SOURCE'!"
+        exit 1
+      fi
+#+END_SRC
+
+before creating it at the desired path in the destination filesystem.
+
+#+BEGIN_SRC shell
+      mkdir -p $FSPATH/$(dirname $DESTINATION) && \
+        cp $SOURCE $FSPATH/$DESTINATION
+      if test $? -ne 0;
+      then
+        error "Failed to initialize file '$FSPATH/$DESTINATION'!"
+        exit 1
+      fi
+      ;;
+#+END_SRC
+
+If the entry specifies a directory, follows its destination path in the
+filesystem being initialized.
+
+#+BEGIN_SRC shell
+    D|d)
+      DESTINATION=$(echo $entry | cut -d':' -f 2)
+#+END_SRC
+
+If the =-c= option is passed (see variable =CHECK_ONLY=), we only check that the
+target filesystem contains the directory.
+
+#+BEGIN_SRC shell
+      if test $CHECK_ONLY -ne 0;
+      then
+        if test ! -d $FSPATH/$DESTINATION;
+        then
+          error "Filesystem is uncomplete! Missing '$FSPATH/$DESTINATION'."
+          exit 1
+        fi
+
+        continue
+      fi
+#+END_SRC
+
+Otherwise, we create the directory at the specified path.
+
+#+BEGIN_SRC shell
+      mkdir -p $FSPATH/$DESTINATION
+      if test $? -ne 0;
+      then
+        error "Failed to initialize directory '$FSPATH/$DESTINATION'!"
+        exit 1
+      fi
+      ;;
+#+END_SRC
+
+We also need to take care of the case where the action specified in the
+description file is not known.
+
+#+BEGIN_SRC shell
+    ,*)
+      error "Failed to initialize filesystem! '$ACTION' is not a valid action."
+      exit 1
+      ;;
+  esac
+done
+#+END_SRC
+
+We finish by printing an information about successful filesystem initialization
+or verification.
+
+#+BEGIN_SRC shell
+if test $CHECK_ONLY -ne 0;
+then
+  echo "Successfully checked the filesystem '$FSPATH'."
+else
+  echo "Successfully initialized a fresh gcvb filesystem at '$FSPATH'."
+fi
+#+END_SRC
+
+*** Description file
+:PROPERTIES:
+:CUSTOM_ID: description-file
+:END:
+
+The format of an ~.fstab~ description file is very straightforward. Each line
+must begin with either a =D= or an =F= (case insensitive) indicating whether a
+directory or a file should be initialized. In case of a directory, this is
+followed by a colon and the destination path of the directory. In case of a
+file, follows a colon, the source path of the file, a colon and the destination
+path in the target filesystem.
+
+Listing [[h5iot.fstab]] features the file ~h5iot.fstab~ describing the ~gcvb~
+filesystem of our benchmarks series.
+
+#+CAPTION: ~gcvb~ filesystem description file for our benchmark series.
+#+HEADER: :tangle ./tangle/h5iot.fstab :mkdirp yes
+#+NAME: h5iot.fstab
+#+BEGIN_SRC shell
+D:data/all/input
+D:data/all/references
+D:data/all/templates
+D:results
+D:slurm
+F:setenv.sh:scripts/setenv.sh
+F:config.yaml:config.yaml
+F:h5iot.yaml:h5iot.yaml
+#+END_SRC
+
+** Configuration file
+:PROPERTIES:
+:CUSTOM_ID: config.yaml
+:header-args: :tangle ./tangle/config.yaml :mkdirp yes :padline no
+:END:
+
+The configuration file is designed to provide a machine-specific information for
+a ~gcvb~ benchmark collection such as the submit command for job scripts, etc.
+Nevertheless, our configuration does not vary from machine to machine, so we
+use the same ~config.yaml~ everywhere.
+
+The configuration of a ~gcvb~ benchmark collection is simple. It usually holds
+in a few lines of code beginning by a machine identifier.
+
+#+BEGIN_SRC yaml
+machine_id: generic
+#+END_SRC
+
+The most important is to define the path to the executable used to submit job
+scripts produced by ~gcvb~.
+
+As we rely on the Slurm workload manager, we use its =sbatch= command to submit
+job scripts. We also want to keep the identifier of the last submitted job for
+later use (see Section [[#submit.sh]]). Note that, the =%f= placeholder is
+replaced with the path to the job script before execution.
+
+#+BEGIN_SRC yaml
+submit_command: "sbatch %f | sed \"s#Submitted batch job ##\" > .lastjob"
+#+END_SRC
+
+Eventually, an associative list of executables can be defined for a handy access
+from definition file. Although, as the executables are not available in the
+validation phase (see Section [[#rr-2020.yaml]]), we can not make use of the
+mechanism and initialize =executables= as an empty list.
+
+#+BEGIN_SRC yaml
+executables: []
+#+END_SRC
+
+** Definition file
+:PROPERTIES:
+:CUSTOM_ID: h5iot.yaml
+:header-args: :tangle ./tangle/h5iot.yaml :mkdirp yes :padline no
+:END:
+
+The definition file lists all the benchmarks to generate. For instance, the file
+~h5iot.yaml~ defines our benchmark series. It begins by a set of default
+values automatically set for each benchmark defined in the file.
+
+At first, we make all the benchmarks use the same data folder (see Section
+[[#gcvb]]). Defining the benchmarks as of type template allows us to make ~gcvb~
+automatically generate benchmarks for different set of parameters (see Section
+[[#performing-benchmarks]]). We address this functionality further in this
+section too.
+
+#+BEGIN_SRC yaml
+default_values:
+  test:
+    description: "An HDF5 I/O test benchmark run."
+    data: "all"
+    type: "template"
+#+END_SRC
+
+For each task, we want to use by default one MPI process mapped and ranked by
+node without any binding.
+
+#+BEGIN_SRC yaml
+  task:
+    nprocs: "-np 1"
+#+END_SRC
+
+Benchmark tasks are launched using =mpirun=.
+
+#+BEGIN_SRC yaml
+    executable: mpirun
+#+END_SRC
