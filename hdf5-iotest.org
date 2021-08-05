@@ -8,9 +8,10 @@
 * How to use this document
 :PROPERTIES:
 :CUSTOM_ID: how-to-use-this-document
+:header-args: :results none
 :END:
 
-#+begin_src shell :results none
+#+begin_src shell
 mkdir -p $HOME/environment
 cd $HOME/environment
 guix environment --pure --ad-hoc wget -- wget \
@@ -18,13 +19,35 @@ guix environment --pure --ad-hoc wget -- wget \
 mv hdf5-iotest.org environment.org
 #+end_src
 
-#+begin_src shell :dir ~/environment :results none
+#+begin_src shell :dir ~/environment
 guix environment --pure --ad-hoc emacs emacs-org -- emacs --batch \
      --no-init-file -l org --eval \
 '(progn (setq org-src-preserve-indentation t) (org-babel-tangle-file "environment.org"))'
 #+end_src
 
-The tangled source files should appear in ~$HOME/environment/tangle~.
+The tangled source files should appear in ~$HOME/environment/tangle~. Next, we
+have to setup the Guix software channels (see Section [[#channels]]).
+
+#+begin_src shell
+mkdir -p $HOME/.config/guix
+cp $HOME/environment/tangle/channels.scm $HOME/.config/guix/channels.scm
+guix pull
+#+end_src
+
+We also need to explicitly acquire the source tarballs of the software packages
+~hdf5-iotest~, ~darshan~ and ~recorder~. They should be placed under
+~$HOME/src~.
+
+#+begin_src shell
+./tangle/setenv.sh -p
+#+end_src
+
+We need to build HDF5 I/O test & packages as needed.
+
+#+begin_src shell
+cd $HOME/environment/tangle
+$(./setenv.sh -ge 'build') -- ./builder.sh -r $HOME/src -o /tmp
+#+end_src
 
 Before running the benchmarks, we have to set up the ~gcvb~ filesystem (see
 Section [[#mkgcvbfs.sh]]). It should appear at ~$HOME/benchmarks/h5iot~. The
@@ -39,16 +62,6 @@ $(./setenv.sh -ge 'fs') -- ./mkgcvbfs.sh -f ./h5iot.fstab \
 cd $HOME/environment
 #+end_src
 
-#+RESULTS:
-
-We also need to explicitly acquire the source tarballs of the software packages
-~hdf5-iotest~, ~darshan~ and ~recorder~. They should be placed under
-~$HOME/src~.
-
-#+begin_src shell
-./tangle/setenv.sh -p
-#+end_src
-
 * Building reproducible software environments
 :PROPERTIES:
 :CUSTOM_ID: building-reproducible-software-environments
@@ -60,12 +73,7 @@ We also need to explicitly acquire the source tarballs of the software packages
 :CUSTOM_ID: gnu-guix
 :END:
 
-** Spack
-:PROPERTIES:
-:CUSTOM_ID: spack
-:END:
-
-** Channels
+*** Channels
 :PROPERTIES:
 :CUSTOM_ID: channels
 :header-args: :tangle ./tangle/channels.scm :mkdirp yes :padline no
@@ -87,13 +95,18 @@ reproducibility of the environment.
 
 #+BEGIN_SRC scheme
 (list
- (channel
-  (name 'guix)
-  (url "https://git.savannah.gnu.org/git/guix.git")
-  (commit "1ac4959c6a94a89fc8d3a73239d107cfb1d96240"))
+  (channel
+    (name 'guix)
+    (url "https://git.savannah.gnu.org/git/guix.git")
+    (commit "69a4494af9eb619fc3d1c0be73b673446061d63f"))
 #+END_SRC
 
-*** TODO Fix the commit tag
+** Spack
+:PROPERTIES:
+:CUSTOM_ID: spack
+:END:
+
+*** TODO Do it the Spack way
 
 ** Environments
 :PROPERTIES:
@@ -170,7 +183,7 @@ PREPARE_TARBALLS=0
 #+BEGIN_SRC shell
 GET_COMMAND=0
 
-ENVIRONMENT="build"
+ENVIRONMENT="nil"
 
 while getopts ":e:ghpr:x" option;
 do
@@ -432,6 +445,10 @@ case $ENVIRONMENT in
     OPTIONS="$OPTIONS_POST_PROCESS"
     PACKAGES="$PACKAGES_POST_PROCESS"
     ;;
+  nil)
+    echo "Have a nice day!"
+    exit 0
+    ;;
   ,*)
     error "'$ENVIRONMENT' is not a valid software environment switch!"
     exit 1
@@ -466,39 +483,172 @@ $ENVIRONMENT_COMMAND -- bash --norc
 * Building HDF5 I/O Test
 :PROPERTIES:
 :CUSTOM_ID: building-hdf5-io-test
+:header-args: :tangle ./tangle/builder.sh :shebang "#!/usr/bin/env bash"
 :END:
 
-** Autotools
+#+begin_src shell
+function help() {
+  echo "Build HDF5 I/O test at H5IOT_ROOT." >&2
+  echo "Usage: ./$(basename $0) [options]" >&2
+  echo >&2
+  echo "Options:" >&2
+  echo "  -d DARSHAN_BASENAME     Darshan tarball base name." >&2
+  echo "  -h                      Show this help message." >&2
+  echo "  -r RECORDER_BASENAME    Recorder tarball base name." >&2
+  echo "  -s SRC_DIR              Build the sources in H5IOT_ROOT." >&2
+  echo "  -t H5IOT_BASENAME       HDF5 I/O test tarball base name." >&2
+  echo "  -o OUT_PATH             Place the binaries in OUT_PATH." >&2
+  echo >&2
+}
+#+end_src
 
-** CMake
+Then, we include a generic error function.
+
+#+BEGIN_SRC shell :noweb yes
+<<shell-error-function>>
+#+END_SRC
+
+=SRC_DIR= holds the path to the source tarballs provided using the =-s= option.
+
+#+BEGIN_SRC shell
+SRC_DIR=""
+#+END_SRC
+
+=OUT_PATH= holds the output path for binaries (see the =-o= option).
+
+#+BEGIN_SRC shell
+OUT_PATH=""
+#+END_SRC
+
+=DARSHAN_BASENAME= holds the base name of the Darshan tarball provided using the
+=-d= option.
+
+#+BEGIN_SRC shell
+DARSHAN_BASENAME=""
+#+END_SRC
+
+=RECORDER_BASENAME= holds the base name of the Darshan tarball provided using
+the =-r= option.
+
+#+BEGIN_SRC shell
+RECORDER_BASENAME=""
+#+END_SRC
+
+=H5IOT_BASENAME= holds the base name of the Darshan tarball provided using
+the =-t= option.
+
+#+BEGIN_SRC shell
+H5IOT_BASENAME=""
+#+END_SRC
+
+At this stage, we are ready to parse the options and check the validity of
+option arguments where applicable.
+
+#+BEGIN_SRC shell
+while getopts ":hd:o:r:s:t:" option;
+do
+  case $option in
+    d)
+      DARSHAN_BASENAME=$OPTARG
+
+      if test "$DARSHAN_BASENAME" == "";
+      then
+        error "'$DARSHAN_BASENAME' must not be empty!"
+        exit 1
+      fi
+      ;;
+    o)
+      OUT_PATH=$OPTARG
+      ;;
+    r)
+      RECORDER_BASENAME=$OPTARG
+
+      if test "$RECORDER_BASENAME" == "";
+      then
+        error "'$RECORDER_BASENAME' must not be empty!"
+        exit 1
+      fi
+      ;;
+    s)
+      SRC_DIR=$OPTARG
+
+      if test ! -d $SRC_DIR;
+      then
+        error "'$SRC_DIR' is not a valid directory!"
+        exit 1
+      fi
+      ;;
+    t)
+      H5IOT_BASENAME=$OPTARG
+
+      if test "$H5IOT_BASENAME" == "";
+      then
+        error "'$H5IOT_BASENAME' must not be empty!"
+        exit 1
+      fi
+      ;;
+#+END_SRC
+
+We must also take into account unknown options, missing option arguments, syntax
+mismatches as well as the case when the =-h= option is specified.
+
+#+BEGIN_SRC shell
+    \?) # Unknown option
+      error "Arguments mismatch! Invalid option '-$OPTARG'."
+      echo
+      help
+      exit 1
+      ;;
+    :) # Missing option argument
+      error "Arguments mismatch! Option '-$OPTARG' expects an argument!"
+      echo
+      help
+      exit 1
+      ;;
+    h | *)
+      help
+      exit 0
+      ;;
+  esac
+done
+#+END_SRC
+
+Next, we have to check if we have all the tarballs.
+
+#+BEGIN_SRC shell
+if test ! -f "$SRC_DIR/$DARSHAN_BASENAME.tar.gz";
+then
+  error "No Darshan tarball found!"
+  exit 1
+fi
+
+if test ! -f "$SRC_DIR/$H5IOT_BASENAME.tar.gz";
+then
+  error "No HDF5 I/O test tarball found!"
+  exit 1
+fi
+
+if test ! -f "$SRC_DIR/$RECORDER_BASENAME.tar.gz";
+then
+  error "No Recorder tarball found!"
+  exit 1
+fi
+#+END_SRC
 
 CMake package discovery works most of the time, but needs help in
 highly-customized environments. Use the ~HDF5_ROOT~ and ~UUID_ROOT~ variables to
 be specific.
 
 #+begin_src shell :results verbatim
-
+cd $SRC_DIR
+tar -zxvf $H5IOT_BASENAME.tar.gz
+cd $H5IOT_BASENAME
 mkdir -p ./build
 cd ./build
-rm -rf *
-cmake -D HDF5_ROOT:PATH=~/.local \
-      -D UUID_ROOT:PATH=/gnu/store/a45p39mgqvfd8kjwibyr0q42k1mw7gmf-util-linux-2.35.1-lib \
-      ../
-
 cmake -D UUID_ROOT:PATH=/gnu/store/a45p39mgqvfd8kjwibyr0q42k1mw7gmf-util-linux-2.35.1-lib \
       ../
-
 make
-
 #+end_src
-
-The ~hdf5_iotest~ binary will be located in ~./build/bin~.
-
-#+begin_src shell :results output
-ls -al ./build/bin
-#+end_src
-
-** Spack
 
 * ~hdf5_iotest.ini~ template file
 :PROPERTIES:
