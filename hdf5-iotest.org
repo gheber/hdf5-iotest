@@ -5,6 +5,8 @@
 :CUSTOM_ID: introduction
 :END:
 
+** TODO Add an Emacs/Org-mode version sanity check
+
 * How to use this document
 :PROPERTIES:
 :CUSTOM_ID: how-to-use-this-document
@@ -19,7 +21,8 @@ guix environment --pure --ad-hoc wget -- wget \
 mv hdf5-iotest.org environment.org
 #+end_src
 
-#+begin_src shell :dir ~/environment
+#+begin_src shell
+cd $HOME/environment
 guix environment --pure --ad-hoc emacs emacs-org -- emacs --batch \
      --no-init-file -l org --eval \
 '(progn (setq org-src-preserve-indentation t) (org-babel-tangle-file "environment.org"))'
@@ -39,6 +42,7 @@ We also need to explicitly acquire the source tarballs of the software packages
 ~$HOME/src~.
 
 #+begin_src shell
+cd $HOME/environment
 ./tangle/setenv.sh -p
 #+end_src
 
@@ -46,7 +50,7 @@ We need to build HDF5 I/O test & packages as needed.
 
 #+begin_src shell
 cd $HOME/environment/tangle
-$(./setenv.sh -ge 'build') -- ./builder.sh -r $HOME/src -o /tmp
+$(./setenv.sh -ge 'build') -- ./builder.sh -s $HOME/src -o /tmp
 #+end_src
 
 Before running the benchmarks, we have to set up the ~gcvb~ filesystem (see
@@ -480,7 +484,7 @@ fi
 $ENVIRONMENT_COMMAND -- bash --norc
 #+END_SRC
 
-* Building HDF5 I/O Test
+* Building HDF5 I/O Test & Co.
 :PROPERTIES:
 :CUSTOM_ID: building-hdf5-io-test
 :header-args: :tangle ./tangle/builder.sh :shebang "#!/usr/bin/env bash"
@@ -492,11 +496,8 @@ function help() {
   echo "Usage: ./$(basename $0) [options]" >&2
   echo >&2
   echo "Options:" >&2
-  echo "  -d DARSHAN_BASENAME     Darshan tarball base name." >&2
   echo "  -h                      Show this help message." >&2
-  echo "  -r RECORDER_BASENAME    Recorder tarball base name." >&2
   echo "  -s SRC_DIR              Build the sources in H5IOT_ROOT." >&2
-  echo "  -t H5IOT_BASENAME       HDF5 I/O test tarball base name." >&2
   echo "  -o OUT_PATH             Place the binaries in OUT_PATH." >&2
   echo >&2
 }
@@ -520,54 +521,33 @@ SRC_DIR=""
 OUT_PATH=""
 #+END_SRC
 
-=DARSHAN_BASENAME= holds the base name of the Darshan tarball provided using the
-=-d= option.
+=DARSHAN_TARBALL= holds the base name of the Darshan tarball.
 
 #+BEGIN_SRC shell
-DARSHAN_BASENAME=""
+DARSHAN_TARBALL=""
 #+END_SRC
 
-=RECORDER_BASENAME= holds the base name of the Darshan tarball provided using
-the =-r= option.
+=RECORDER_TARBALL= holds the base name of the Recorder tarball.
 
 #+BEGIN_SRC shell
-RECORDER_BASENAME=""
+RECORDER_TARBALL=""
 #+END_SRC
 
-=H5IOT_BASENAME= holds the base name of the Darshan tarball provided using
-the =-t= option.
+=H5IOT_TARBALL= holds the base name of the HDF5 I/O test tarball.
 
 #+BEGIN_SRC shell
-H5IOT_BASENAME=""
+H5IOT_TARBALL=""
 #+END_SRC
 
 At this stage, we are ready to parse the options and check the validity of
 option arguments where applicable.
 
 #+BEGIN_SRC shell
-while getopts ":hd:o:r:s:t:" option;
+while getopts ":ho:s:" option;
 do
   case $option in
-    d)
-      DARSHAN_BASENAME=$OPTARG
-
-      if test "$DARSHAN_BASENAME" == "";
-      then
-        error "'$DARSHAN_BASENAME' must not be empty!"
-        exit 1
-      fi
-      ;;
     o)
       OUT_PATH=$OPTARG
-      ;;
-    r)
-      RECORDER_BASENAME=$OPTARG
-
-      if test "$RECORDER_BASENAME" == "";
-      then
-        error "'$RECORDER_BASENAME' must not be empty!"
-        exit 1
-      fi
       ;;
     s)
       SRC_DIR=$OPTARG
@@ -575,15 +555,6 @@ do
       if test ! -d $SRC_DIR;
       then
         error "'$SRC_DIR' is not a valid directory!"
-        exit 1
-      fi
-      ;;
-    t)
-      H5IOT_BASENAME=$OPTARG
-
-      if test "$H5IOT_BASENAME" == "";
-      then
-        error "'$H5IOT_BASENAME' must not be empty!"
         exit 1
       fi
       ;;
@@ -613,22 +584,28 @@ mismatches as well as the case when the =-h= option is specified.
 done
 #+END_SRC
 
-Next, we have to check if we have all the tarballs.
+Check if we have all tarballs:
 
 #+BEGIN_SRC shell
-if test ! -f "$SRC_DIR/$DARSHAN_BASENAME.tar.gz";
+DARSHAN_TARBALL=$(ls $SRC_DIR/darshan-git.*.tar.gz)
+
+if test ! -f "$DARSHAN_TARBALL";
 then
   error "No Darshan tarball found!"
   exit 1
 fi
 
-if test ! -f "$SRC_DIR/$H5IOT_BASENAME.tar.gz";
+H5IOT_TARBALL=$(ls $SRC_DIR/hdf5-iotest-git.*.tar.gz)
+
+if test ! -f "$H5IOT_TARBALL";
 then
   error "No HDF5 I/O test tarball found!"
   exit 1
 fi
 
-if test ! -f "$SRC_DIR/$RECORDER_BASENAME.tar.gz";
+RECORDER_TARBALL=$(ls $SRC_DIR/recorder-git.*.tar.gz)
+
+if test ! -f "$RECORDER_TARBALL";
 then
   error "No Recorder tarball found!"
   exit 1
@@ -639,143 +616,24 @@ CMake package discovery works most of the time, but needs help in
 highly-customized environments. Use the ~HDF5_ROOT~ and ~UUID_ROOT~ variables to
 be specific.
 
-#+begin_src shell :results verbatim
+#+begin_src shell
 cd $SRC_DIR
-tar -zxvf $H5IOT_BASENAME.tar.gz
-cd $H5IOT_BASENAME
+tar -zxvf $H5IOT_TARBALL
+
+cd $(basename -s .tar.gz $H5IOT_TARBALL)
 mkdir -p ./build
 cd ./build
+
 cmake -D UUID_ROOT:PATH=/gnu/store/a45p39mgqvfd8kjwibyr0q42k1mw7gmf-util-linux-2.35.1-lib \
-      ../
-make
+  ../ && make
+
+mkdir -p $OUT_PATH
+cp ./bin/hdf5_iotest $OUT_PATH
 #+end_src
 
-* ~hdf5_iotest.ini~ template file
-:PROPERTIES:
-:CUSTOM_ID: ini-template-file
-:END:
-
-*** Common
-
-An =ini= file begins with a default section.
-
-#+begin_src shell :noweb-ref ini-common
-[DEFAULT]
-#+end_src
-
-- the version of the template,
-#+begin_src shell :noweb-ref ini-common
-version = {ini[version]}
-#+end_src
-
-- the number of steps,
-#+begin_src shell :noweb-ref ini-common
-steps = {ini[steps]}
-#+end_src
-
-- the number of arrays per step,
-#+begin_src shell :noweb-ref ini-common
-arrays = {ini[arrays]}
-#+end_src
-
-- the number of rows per array,
-#+begin_src shell :noweb-ref ini-common
-rows = {ini[rows]}
-#+end_src
-
-- the number of columns per array,
-#+begin_src shell :noweb-ref ini-common
-columns = {ini[columns]}
-#+end_src
-
-- align along increment [bytes] boundaries,
-#+begin_src shell :noweb-ref ini-common
-alignment-increment = {ini[alignment-increment]}
-#+end_src
-
-- the minimum object size [bytes] to force alignment (0 = all objects),
-#+begin_src shell :noweb-ref ini-common
-alignment-size = {ini[alignment-size]}
-#+end_src
-
-- the minimum metadata block allocation size [bytes],
-#+begin_src shell :noweb-ref ini-common
-meta-block-size = {ini[meta-block-size]}
-#+end_src
-
-- the HDF5 output file name,
-#+begin_src shell :noweb-ref ini-common
-hdf5-file = {ini[hdf5-file]}
-#+end_src
-
-- the CSV output file name,
-#+begin_src shell :noweb-ref ini-common
-csv-file = {ini[csv-file]}
-#+end_src
-
-- restart,
-#+begin_src shell :noweb-ref ini-common
-restart = {ini[restart]}
-#+end_src
-
-- use the split VFD to split metadata and "raw" data (0, 1),
-#+begin_src shell :noweb-ref ini-common
-split = {ini[split]}
-#+end_src
-
-- run a single case (> 0),
-#+begin_src shell :noweb-ref ini-common
-one-case = {ini[one-case]}
-#+end_src
-
-- Gzip compression ([0..9]),
-#+begin_src shell :noweb-ref ini-common
-gzip = {ini[gzip]}
-#+end_src
-
-- Szip compression (=H5_SZIP_NN_OPTION_MASK=, =8=),
-#+begin_src shell :noweb-ref ini-common
-szip = {ini[szip]}
-#+end_src
-
-*** Single process
-
-- the VFD to be used for single process runs,
-#+begin_src shell :noweb-ref ini-single-proc
-single-process = {ini[single-process]}
-#+end_src
-
-#+HEADER: :tangle ./tangle/single-proc.ini :mkdirp yes :noweb no-export
-#+begin_src shell
-<<ini-common>>
-<<ini-single-proc>>
-#+end_src
-
-*** Multiple processes
-
-- the number of process rows,
-#+begin_src shell :noweb-ref ini-multi-proc
-process-rows = {ini[process-rows]}
-#+end_src
-
-- the number of process columns,
-#+begin_src shell :noweb-ref ini-multi-proc
-process-columns = {ini[process-columns]}
-#+end_src
-
-- the scaling mode (weak, strong),
-#+begin_src shell :noweb-ref ini-multi-proc
-scaling = {ini[scaling]}
-#+end_src
-
-#+HEADER: :tangle ./tangle/multi-proc.ini :mkdirp yes :noweb no-export
-#+begin_src shell
-<<ini-common>>
-<<ini-multi-proc>>
-#+end_src
+** TODO Build Darshan and Recorder
 
 * Performing benchmarks
-
 :PROPERTIES:
 :CUSTOM_ID: performing-benchmarks
 :header-args: :eval never
@@ -787,12 +645,6 @@ series of benchmarks, generate corresponding shell job scripts for every
 benchmark or a selected group of benchmarks, submit these job scripts for
 execution, then gather and optionally validate or post-process the results. To
 generate multiple variants of the same benchmark ~gcvb~ provides templates.
-
-** =sbatch= template files
-:PROPERTIES:
-:CUSTOM_ID: sbatch-template-files
-:END:
-
 
 ** ~gcvb~
 :PROPERTIES:
@@ -835,7 +687,149 @@ series where:
     store benchmark results.
   - ~h5iot.yaml~ represents the benchmark definition file.
 
-    * Initializing filesystem
+** =sbatch= template files
+:PROPERTIES:
+:CUSTOM_ID: sbatch-template-files
+:END:
+
+We use Slurm cite:slurm to schedule and execute our experiments on the target
+high-performance computing platforms. ~gcvb~ produces a job script for each
+benchmark described in the definition file. This script is then passed to Slurm
+for to be scheduled on a computation node or nodes.
+
+Each job script produced by ~gcvb~ is prepended with a header contaning the
+configuration statements for the =sbatch= command of Slurm cite:slurmGuide used
+to submit jobs for computation. We take advantage of the template feature in
+order to be able to dynamically generate =#SBATCH= headers specific to a given
+set of benchmarks.
+
+An =sbatch= template begins as a standard shell script.
+
+#+NAME: sbatch-beginning
+#+BEGIN_SRC shell
+#! /usr/bin/env bash
+#
+# Slurm batch job script
+#
+#+END_SRC
+
+We use multiple template files but most of the =#SBATCH= directives are common
+to all of them such as:
+
+- the count of computational nodes to reserve,
+#+HEADER: :noweb-ref sbatch-end
+#+BEGIN_SRC shell
+#SBATCH -N {slurm[count]}
+#+END_SRC
+
+- the count of task slots per node to reserve,
+#+HEADER: :noweb-ref sbatch-end
+#+BEGIN_SRC shell
+#SBATCH -n {slurm[tasks]}
+#+END_SRC
+
+- the restriction on the node type depending on the node family name,
+#+HEADER: :noweb-ref sbatch-end
+#+BEGIN_SRC shell
+#SBATCH --constraint={slurm[node]}
+#+END_SRC
+
+- the exclusion of the other users from the usage of the reserved resources,
+#+HEADER: :noweb-ref sbatch-end
+#+BEGIN_SRC shell
+#SBATCH --exclusive
+#+END_SRC
+
+- the reservation time,
+#+HEADER: :noweb-ref sbatch-end
+#+BEGIN_SRC shell
+#SBATCH --time={slurm[time]}
+#+END_SRC
+
+- the location to place the slurm log files in where =%x= is the corresponding
+  job name and =%j= the identifier of the job.
+#+HEADER: :noweb-ref sbatch-end
+#+BEGIN_SRC shell
+#SBATCH -o slurm/%x-%j.log
+#+END_SRC
+
+Note that, ={slurm[count]}= and so on represent placeholders for values replaced
+by actual values based on the benchmark definition file during template
+expansion (see Section [[#h5iot.yaml]]).
+
+The only =#SBATCH= directive specific to each template file is the job name.
+Based on the latter, we distinguish different sets of benchmarks. Grouping
+individual benchmarks into a single job script allows us to submit fewer jobs.
+This way, they are more balanced in terms of the computation time we need to
+allocate for them on the target computing platform. For example, instead of
+submitting 12 jobs having each the time limit of 10 minutes, we submit two jobs
+with the time limit of 1 hour each. Benchmarks to be placed into a common job
+script are identified by matching their job name against a regular expression.
+
+In the =sbatch= header template ~monobatch~ used for benchmarks with all the
+jobs running on single computational node, the job name is simply composed of a
+prefix which typically corresponds to the constant part of a benchmark name (see
+Section [[#h5iot.yaml]]).
+
+#+HEADER: :tangle ./tangle/monobatch :mkdirp yes :noweb no-export
+#+BEGIN_SRC shell
+<<sbatch-beginning>>
+#SBATCH --job-name={slurm[prefix]}
+<<sbatch-end>>
+#+END_SRC
+
+When a template-based benchmark definition yields a large amount of benchmarks,
+we prefer to group them into multiple job scripts and launch the latter in
+parallel. The value of ={job[batch]}= in the ~polybatch~ header determines which
+benchmark belongs to which job script.
+
+#+HEADER: :tangle ./tangle/polybatch :mkdirp yes :noweb no-export
+#+BEGIN_SRC shell
+<<sbatch-beginning>>
+#SBATCH --job-name={slurm[prefix]}-{job[batch]}
+<<sbatch-end>>
+#+END_SRC
+
+For coupled solver benchmarks, we need a more fine grained distribution of the
+latter among Slurm jobs. So, in the ~coupled~ =sbatch= header, we add to the job
+name also the names of sparse and dense solvers involved in the benchmark.
+
+#+HEADER: :tangle ./tangle/coupled :mkdirp yes :noweb no-export
+#+BEGIN_SRC shell
+<<sbatch-beginning>>
+#SBATCH --job-name={slurm[prefix]}-{job[batch]}-{sparse[name]}-{dense[name]}
+<<sbatch-end>>
+#+END_SRC
+
+Same for scalability benchmarks. In ~scalability~, we add to the job name the
+name of the solver being used.
+
+#+HEADER: :tangle ./tangle/scalability :mkdirp yes :noweb no-export
+#+BEGIN_SRC shell
+<<sbatch-beginning>>
+#SBATCH --job-name={slurm[prefix]}-{solver[name]}-{job[map]}
+<<sbatch-end>>
+#+END_SRC
+
+At the end of the header, we add a couple of commands to get the time and date
+when the job was scheduled and on which node.
+
+#+HEADER: :noweb-ref sbatch-end
+#+BEGIN_SRC shell
+echo "Job scheduled on $(hostname), on $(date)"
+echo
+#+END_SRC
+
+Also, we disable the creation of memory dump files in case of memory error. Even
+if they can be particularly useful, in some cases they consume too much disk
+space and prevent other jobs from running.
+
+#+HEADER: :noweb-ref sbatch-end
+#+BEGIN_SRC shell
+ulimit -c 0
+#+END_SRC
+
+** Initializing filesystem
 :PROPERTIES:
 :CUSTOM_ID: initializing-filesystem
 :END:
@@ -1116,6 +1110,10 @@ D:data/all/references
 D:data/all/templates
 D:results
 D:slurm
+F:monobatch:data/all/templates/monobatch/sbatch
+F:polybatch:data/all/templates/polybatch/sbatch
+F:coupled:data/all/templates/coupled/sbatch
+F:scalability:data/all/templates/scalability/sbatch
 F:setenv.sh:scripts/setenv.sh
 F:config.yaml:config.yaml
 F:h5iot.yaml:h5iot.yaml
@@ -1153,7 +1151,7 @@ submit_command: "sbatch %f | sed \"s#Submitted batch job ##\" > .lastjob"
 
 Eventually, an associative list of executables can be defined for a handy access
 from definition file. Although, as the executables are not available in the
-validation phase (see Section [[#rr-2020.yaml]]), we can not make use of the
+validation phase (see Section [[#h5iot.yaml]]), we can not make use of the
 mechanism and initialize =executables= as an empty list.
 
 #+BEGIN_SRC yaml
@@ -1196,4 +1194,205 @@ Benchmark tasks are launched using =mpirun=.
 
 #+BEGIN_SRC yaml
     executable: mpirun
+#+END_SRC
+
+We can define a generic launch command for the future tasks. Note that
+={@job_creation}= is a special tag recognized by the ~gcvb~ parser which allows
+us to access task attributes such as the =executable= and =options= keys from
+within =launch_command= for example.
+
+The launch command begins by the creation of a dedicated temporary folder for
+the benchmark. This is useful to measure the disk space used during the
+execution of the latter using a storage resource monitoring Python script (see
+Section [[#rss.py]]). =full_id= represents a unique task identifier.
+
+#+BEGIN_SRC yaml
+    launch_command: "mkdir -p
+    /tmp/vive-pain-au-chocolat/{@job_creation[full_id]} &&
+#+END_SRC
+
+Also, we echo current parallel configuration to the standard output log in order
+to save it for later processing (see Section [[#parse-test_H5IOT.sh]]).
+
+#+BEGIN_SRC yaml
+    echo \"{@job_creation[nprocs]}\" \"{@job_creation[nthreads]}\" >
+    stdout.log &&
+#+END_SRC
+
+Follows setup of the environment variable defining the path to the temporary
+folder to use during the benchmark execution.
+
+#+BEGIN_SRC yaml
+    TMPDIR=/tmp/vive-pain-au-chocolat/{@job_creation[full_id]}
+#+END_SRC
+
+We can also include the set of environment variables specifying the count of
+OpenMP and MKL threads. This information is accessible through the key
+=nthreads= which is a task attribute like =nprocs=.
+
+#+BEGIN_SRC yaml
+    {@job_creation[nthreads]}
+#+END_SRC
+
+Then, we specify the primary executable =mpirun= as defined in =executable=
+together with MPI process configuration parameters stored in =nprocs=.
+
+#+BEGIN_SRC yaml
+    {@job_creation[executable]} {@job_creation[nprocs]}
+#+END_SRC
+
+We launch ~test_H5IOT~ through the storage resource monitoring script (see
+Section [[#rss.py]]) with options common to all the benchmarks followed by the
+placeholder ={@job_creation[options]}= for options specific to each set of
+benchmarks.
+
+Finally, we redirect standard and error outputs into associated log files and
+clean any files produced during benchmark execution except logs, results,
+profiles, and traces, e. g. files with extensions ~.log~, ~.csv~, ~.yaml~ or
+beginning with ~prof_file~. The output of the parsing, e. g. the file =data.csv=
+is deleted only if execution stops prematurely, e. g. if no =traceCall.log= is
+produced.
+
+Note that commands are run from within benchmark-specific folders under the
+~results/<session>~ directories (see Section [[#gcvb]]).
+
+#+BEGIN_SRC yaml
+    ../../../scripts/rss.py test_H5IOT \
+    {@job_creation[options]} >> stdout.log 2> stderr.log &&
+    rm -f $(find . -type f ! -name \"*.log\" ! -name \"*.csv\" ! -name
+    \"*.yaml\" ! -name \"prof_file*\") && test ! -f ongoing_traceCall.log ||
+    rm -f data.csv"
+#+END_SRC
+
+In our case, we do not perform any result validation in terms of value check.
+Although, we take advantage of the validation phase in ~gcvb~ to gather data
+from log files into a separate ~data.csv~ file per benchmark and inject them
+into the ~gcvb~ NoSQL database (see Section [[#gcvb]]) using a Python script
+(see Section [[#inject.py]]) which calls our parsing script (see Section
+[[#parse-test_H5IOT.sh]]) to extract data from the output logs.
+
+We begin by defining the type of each validation. The most adapted type for our
+needs is the generic one, i. e. =configuration_independent=. For further
+details, we invite the reader to consult cite:gcvb.
+
+#+BEGIN_SRC yaml
+  validation:
+    type: "configuration_independent"
+#+END_SRC
+
+There is no =option= key available under =validation=. Therefore, we include
+default options and the path to the injecting Python script in =executable=.
+
+Follow the parameters to be passed to the inner call of the parsing script. In
+this case, we specify here the output log file to be ~stdout.log~ as defined in
+=launch_command=.
+
+The =-r .= parameter tells the parsing script to look for the resource
+monitoring logs produced by the corresponding Python script (see Section
+[[#rss.py]]) in the current working directory and the =-o data.csv= parameter
+defines the output file for the parsing result.
+
+#+BEGIN_SRC yaml
+    executable: "../../../scripts/inject.py data.csv
+    ../../../scripts/parse-test_H5IOT.sh -s stdout.log -r . -o data.csv"
+#+END_SRC
+
+At this stage, we can define actual benchmarks. They are structured in packs.
+For now, we have only one pack but this document shall evolve and include all
+our future benchmark definitions.
+
+Each pack contains a list of benchmarks and each benchmark may be composed of
+one or more tasks having one or more validation tasks each.
+
+#+BEGIN_SRC yaml
+Packs:
+  -
+    pack_id: "test_H5IOT"
+    description: "Analyze the impact of HDF5 library paramaters."
+    Tests:
+#+END_SRC
+
+Firstly, we want to benchmark the HDF5 library defaults with a single process.
+Under =template_instantiation= there are two array constructs later expanded by
+~gcvb~ to generate multiple variants of the benchmark, e. g. for various problem
+sizes.
+
+=slurm= holds the common job name prefix and the scheduling information used for
+the generation of the associated =sbatch= header file ~monobatch~ (see Section
+[[#sbatch-template-files]]).
+
+The =nbpts= array defines the problem sizes to generate benchmarks for. Note
+that ={slurm[prefix]}=, ={slurm[platform]}=, ={nbpts}= and so on are the
+placeholders for the values defined in @@latex:\\@@ =template_instantiation=.
+
+Given the current =template_instantiation= configuration, we generate here
+$1 \times 3 = 3$ SPIDO benchmarks grouped into a single job script with a time
+limit of 2 hours.
+
+#+BEGIN_SRC yaml
+      -
+        id: "h5iot-sequential-{vfd}"
+        template_files: "monobatch"
+        template_instantiation:
+          slurm:
+            - { prefix: "h5iot", platform: "guix", node: "opti", count: 1,
+                tasks: 1, time: "0-00:05:00" }
+          problem:
+            - { steps: 20, arrays: 500, rows: 100, cols: 200 }
+          vfd: [ "posix", "core", "mpi-io-uni" ]
+#+END_SRC
+
+Follows the task corresponding to this benchmark. The launch command is read
+from the list of default values defined at the beginning of the file. We only
+override here the =nthreads= key to set the proper count of OpenMP and MKL
+threads to use for the computation. The values are propagated to the launch
+command through the ={@job_creation[options]}= placeholder.
+
+#+BEGIN_SRC yaml
+        Tasks:
+          -
+            nthreads: "OMP_NUM_THREADS=1 MKL_NUM_THREADS=1"
+            options: "--steps {problem[steps]} --arrays {problem[arrays]} --rows {problem[rows]} --cols {problem[cols]} --vfd {vfd}"
+#+END_SRC
+
+For the corresponding validation phase we need to specify an identifier as well
+as a launch command composed of the validation =executable= obtained through the
+={@job_creation[va_executable]}= placeholder. Then, we define some options
+specific to this benchmark such as the information on the solver used, the
+target platform as well as the variation of the benchmark to make a difference
+between regular benchmarks based on parameter variation and scalability
+benchmarks.
+
+#+BEGIN_SRC yaml
+            Validations:
+              -
+                id: "validation-h5iot-sequential-{vfd}"
+                launch_command: "{@job_creation[va_executable]} -K mode=single
+                -K variation=parameters,platform={slurm[platform]}
+                -K node={slurm[node]}"
+#+END_SRC
+
+#+BEGIN_SRC yaml
+      -
+        id: "h5iot-{scaling}-{job[prows]}-{job[pcols]}-{mpi_io}"
+        template_files: "monobatch"
+        template_instantiation:
+          slurm:
+            - { prefix: "h5iot", platform: "guix", node: "opti", count: 1,
+                tasks: 4, time: "0-00:05:00" }
+          problem:
+            - { steps: 20, arrays: 500, rows: 100, cols: 200 }
+          scaling: [ "strong", "weak" ]
+          mpi_io: [ "collective", "independent" ]
+          job:
+            - { prows: 1, pcols: 4 }
+            - { prows: 2, pcols: 2 }
+            - { prows: 4, pcols: 1 }
+#+END_SRC
+
+#+BEGIN_SRC yaml
+        Tasks:
+          -
+            nthreads: "OMP_NUM_THREADS=1 MKL_NUM_THREADS=1"
+            options: "--steps {problem[steps]} --arrays {problem[arrays]} --rows {problem[rows]} --cols {problem[cols]} --prows {job[prows]} --pcols {job[pcols]} --vfd mpi-io --mpi-io {mpi_io}"
 #+END_SRC
